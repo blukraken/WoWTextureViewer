@@ -180,7 +180,10 @@ def delete_image(image_id: str):
     return {"ok": True}
 
 
-# Optional: health check
-@app.get("/api/health")
-def health():
-    return {"status": "ok"}
+# add near bottom of main.py
+from fastapi.responses import RedirectResponse
+
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/static/index.html", status_code=302)
