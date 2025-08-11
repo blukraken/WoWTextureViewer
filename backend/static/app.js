@@ -1,4 +1,5 @@
 const $ = (sel) => document.querySelector(sel);
+
 const gallery = $("#gallery");
 const searchInput = $("#search");
 const countTag = $("#count");
@@ -13,14 +14,21 @@ const modalSize = $("#modalSize");
 const modalClose = $("#modalClose");
 const modalDownload = $("#modalDownload");
 
-let allItems = [];   // entire list from server
-let filtered = [];   // filtered by client-side search
+// API_BASE is defined in index.html; it's "" for same-origin.
+const API = (path) => `${window.API_BASE || ""}${path}`;
+
+let allItems = [];
+let filtered = [];
+
+function safeName(name) {
+  return name.replace(/\.[^.]+$/, "").replace(/[^\w\-]+/g, "_");
+}
 
 async function fetchImages(q = "") {
-  const url = new URL(`${API_BASE}/api/images`, location.origin);
-  if (API_BASE === "") url.pathname = "/api/images"; // same origin when bundled
+  const url = new URL(API("/api/images"), window.location.origin);
+  if ((window.API_BASE || "") === "") url.pathname = "/api/images"; // same origin
   if (q) url.searchParams.set("search", q);
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), { credentials: "omit" });
   if (!res.ok) throw new Error("Failed to load images");
   return res.json();
 }
@@ -51,25 +59,22 @@ function render(items) {
   countTag.textContent = `${items.length} shown`;
 }
 
-function safeName(name) {
-  return name.replace(/\.[^.]+$/, "").replace(/[^\w\-]+/g, "_");
-}
-
 async function refreshList() {
   const q = searchInput.value.trim();
   allItems = await fetchImages(q);
-  filtered = allItems; // server already filtered by q
+  filtered = allItems; // server filtered by q
   render(filtered);
 }
 
 async function uploadFiles(files) {
+  if (!files || files.length === 0) return;
   const fd = new FormData();
   for (const f of files) fd.append("files", f, f.name);
-  const res = await fetch(`${API_BASE}/api/upload`, {
-    method: "POST",
-    body: fd,
-  });
-  if (!res.ok) throw new Error("Upload failed");
+  const res = await fetch(API("/api/upload"), { method: "POST", body: fd });
+  if (!res.ok) {
+    alert("Upload failed.");
+    return;
+  }
   await refreshList();
 }
 
@@ -92,23 +97,27 @@ function attachEvents() {
   refreshBtn.addEventListener("click", refreshList);
 
   searchInput.addEventListener("input", async () => {
-    // Ask API to filter by filename (handles large datasets cheaply)
+    // Ask server to filter to keep client light for large sets
     await refreshList();
   });
 
-  // Drag & drop
-  ["dragenter", "dragover"].forEach(ev =>
-    dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add("drag"); })
+  // Drag-n-drop
+  ["dragenter", "dragover"].forEach((ev) =>
+    dropzone.addEventListener(ev, (e) => {
+      e.preventDefault(); dropzone.classList.add("drag");
+    })
   );
-  ["dragleave", "drop"].forEach(ev =>
-    dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.remove("drag"); })
+  ["dragleave", "drop"].forEach((ev) =>
+    dropzone.addEventListener(ev, (e) => {
+      e.preventDefault(); dropzone.classList.remove("drag");
+    })
   );
   dropzone.addEventListener("drop", (e) => {
     const files = Array.from(e.dataTransfer.files || []);
     if (files.length) uploadFiles(files);
   });
 
-  // Gallery click → modal
+  // Modal open/close
   gallery.addEventListener("click", (e) => {
     const thumb = e.target.closest(".thumb");
     if (!thumb) return;
@@ -116,7 +125,6 @@ function attachEvents() {
     const item = filtered.find((x) => x.id === id);
     if (item) openModal(item);
   });
-
   modalClose.addEventListener("click", () => modal.close());
 }
 

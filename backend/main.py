@@ -1,3 +1,4 @@
+import os
 import io
 import uuid
 import sqlite3
@@ -7,21 +8,24 @@ from typing import List, Optional
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from PIL import Image, UnidentifiedImageError
 
-# --- Config ---
+# ----------------- Paths & Storage -----------------
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-IMG_DIR = STATIC_DIR / "images"
-DB_PATH = BASE_DIR / "images.db"
 
-STATIC_DIR.mkdir(exist_ok=True)
-IMG_DIR.mkdir(parents=True, exist_ok=True)
+# If you add a Render Disk, set env IMAGE_DIR=/data/images
+IMAGE_DIR = Path(os.getenv("IMAGE_DIR", STATIC_DIR / "images"))
+IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Put the DB alongside images so it persists when IMAGE_DIR is on a disk
+DB_PATH = IMAGE_DIR / "images.db"
 
 
-# --- DB helpers ---
+# ----------------- DB Helpers -----------------
 def db() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
@@ -45,22 +49,28 @@ def init_db():
 
 init_db()
 
-# --- App ---
+# ----------------- App -----------------
 app = FastAPI(title="WoW Texture Viewer API")
 
-# Allow local dev (frontend can be anywhere)
+# Serve /static (frontend lives here by default)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# CORS (harmless if same-origin; useful if you host UI elsewhere)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in production
+    allow_origins=["*"],  # tighten to your domain in production
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Serve static (so you can deploy everything in one place if you want)
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Nice root URL
+@app.get("/")
+def root():
+    return RedirectResponse(url="/static/index.html", status_code=302)
 
 
-# --- Models ---
+# ----------------- Models -----------------
 class ImageItem(BaseModel):
     id: str
     name: str
@@ -70,7 +80,7 @@ class ImageItem(BaseModel):
     created_at: str
 
 
-# --- Utils ---
+# ----------------- Utils -----------------
 SUPPORTED = {".blp", ".tga", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 
@@ -82,8 +92,11 @@ def ext_of(filename: str) -> str:
     return ""
 
 
-def to_png_bytes(raw: bytes) -> (bytes, int, int, str):
-    # Open with Pillow; if pillow-blp is installed, BLP works transparently
+def to_png_bytes(raw: bytes) -> tuple[bytes, int, int, str]:
+    """
+    Open with Pillow; Pillow supports .tga. With pillow-blp installed, .blp works too.
+    Convert to RGBA and return PNG bytes plus size and original format.
+    """
     with Image.open(io.BytesIO(raw)) as im:
         fmt = im.format or "?"
         im = im.convert("RGBA")
@@ -93,32 +106,45 @@ def to_png_bytes(raw: bytes) -> (bytes, int, int, str):
         return buf.getvalue(), w, h, fmt
 
 
-# --- Routes ---
+def build_public_url(file_path: Path) -> str:
+    """
+    If IMAGE_DIR is under static/, return a /static/... URL.
+    Otherwise, serve via /api/file/{name}.
+    """
+    try:
+        file_path.relative_to(STATIC_DIR)
+        rel = file_path.relative_to(STATIC_DIR).as_posix()
+        return f"/static/{rel}"
+    except ValueError:
+        # Not under static
+        return f"/api/file/{file_path.name}"
+
+
+# ----------------- Routes -----------------
 @app.post("/api/upload", response_model=List[ImageItem])
 async def upload(files: List[UploadFile] = File(...)):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")
 
     out: List[ImageItem] = []
-    skipped = 0
 
     with db() as con:
         for f in files:
             name = f.filename.split("/")[-1].split("\\")[-1]
-            ext = ext_of(name)
-            if not ext:
-                skipped += 1
+            if not ext_of(name):
+                # Skip unsupported extension silently
                 continue
             try:
                 raw = await f.read()
                 png, w, h, _fmt = to_png_bytes(raw)
                 iid = uuid.uuid4().hex
-                file_path = IMG_DIR / f"{iid}.png"
+                file_path = IMAGE_DIR / f"{iid}.png"
                 with open(file_path, "wb") as fp:
                     fp.write(png)
 
-                url = f"/static/images/{iid}.png"
+                url = build_public_url(file_path)
                 created_at = datetime.datetime.utcnow().isoformat()
+
                 con.execute(
                     "INSERT INTO images (id, name, width, height, url, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                     (iid, name, w, h, url, created_at),
@@ -134,10 +160,10 @@ async def upload(files: List[UploadFile] = File(...)):
                     )
                 )
             except UnidentifiedImageError:
-                # Not an image we can read
+                # Not an image Pillow can read
                 continue
             except Exception:
-                # Skip on failure but keep uploading others
+                # Skip file on any other error, proceed with the rest
                 continue
         con.commit()
 
@@ -168,22 +194,38 @@ def delete_image(image_id: str):
         row = con.execute("SELECT url FROM images WHERE id = ?", (image_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Not found")
+        # Remove DB row first
         con.execute("DELETE FROM images WHERE id = ?", (image_id,))
         con.commit()
-    # remove file
+
+    # Remove file if we can figure out its path
+    url = row["url"]
     try:
-        path = Path(BASE_DIR / row["url"].lstrip("/"))
-        if path.exists():
+        if url.startswith("/static/"):
+            path = STATIC_DIR / url[len("/static/") :]
+        elif url.startswith("/api/file/"):
+            name = url.split("/")[-1]
+            path = IMAGE_DIR / name
+        else:
+            path = None
+        if path and path.exists():
             path.unlink()
     except Exception:
         pass
     return {"ok": True}
 
 
-# add near bottom of main.py
-from fastapi.responses import RedirectResponse
+@app.get("/api/file/{name}")
+def serve_file(name: str):
+    """
+    Only used when IMAGE_DIR is not under STATIC_DIR.
+    """
+    path = IMAGE_DIR / name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(path, media_type="image/png")
 
 
-@app.get("/")
-def root():
-    return RedirectResponse(url="/static/index.html", status_code=302)
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
