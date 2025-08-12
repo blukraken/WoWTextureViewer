@@ -122,12 +122,8 @@ async function uploadFiles(files) {
 
   const fd = new FormData();
   for (const f of files) {
-    const lowerName = f.name.toLowerCase();
-    if (lowerName.endsWith(".blp")) {
+    if (f.name.toLowerCase().endsWith(".blp")) {
       const pngFile = await decodeBLPtoPNG(f);
-      fd.append("files", pngFile, pngFile.name);
-    } else if (lowerName.endsWith(".tga")) { // 👈 ADD THIS ELSE IF BLOCK
-      const pngFile = await decodeTGAtoPNG(f);
       fd.append("files", pngFile, pngFile.name);
     } else {
       fd.append("files", f, f.name);

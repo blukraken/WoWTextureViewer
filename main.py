@@ -11,7 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from PIL import Image, UnidentifiedImageError
+from PIL import UnidentifiedImageError
+import imageio.v2 as imageio
 
 # ----------------- Paths & Storage -----------------
 BASE_DIR = Path(__file__).resolve().parent
@@ -94,16 +95,22 @@ def ext_of(filename: str) -> str:
 
 def to_png_bytes(raw: bytes) -> tuple[bytes, int, int, str]:
     """
-    Open with Pillow; Pillow supports .tga. With pillow-blp installed, .blp works too.
-    Convert to RGBA and return PNG bytes plus size and original format.
+    Read image data using imageio for robustness, then convert to PNG.
     """
-    with Image.open(io.BytesIO(raw)) as im:
-        fmt = im.format or "?"
-        im = im.convert("RGBA")
-        w, h = im.width, im.height
+    try:
+        # imageio reads from bytes and can handle a wider variety of formats
+        img_array = imageio.imread(raw)
+        h, w = img_array.shape[0], img_array.shape[1]
+
+        # Use imageio to write the data to PNG format in memory
         buf = io.BytesIO()
-        im.save(buf, format="PNG")
-        return buf.getvalue(), w, h, fmt
+        imageio.imwrite(buf, img_array, format="PNG")
+
+        # Original format isn't critical, so we can stub it
+        return buf.getvalue(), w, h, "unknown"
+    except Exception as e:
+        # If imageio fails, raise an error that the upload loop will catch
+        raise UnidentifiedImageError(f"imageio failed to read image: {e}")
 
 
 def build_public_url(file_path: Path) -> str:
