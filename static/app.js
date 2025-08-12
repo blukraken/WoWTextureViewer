@@ -1,3 +1,5 @@
+import { Blp, BLP_IMAGE_FORMAT } from "https://cdn.jsdelivr.net/npm/@wowserhq/format@0.28.0/+esm";
+
 const $ = (sel) => document.querySelector(sel);
 
 const gallery = $("#gallery");
@@ -66,10 +68,43 @@ async function refreshList() {
   render(filtered);
 }
 
+async function decodeBLPtoPNG(file) {
+  const ab = await file.arrayBuffer();
+  const blp = new Blp().load(ab);
+  const img = blp.getImage(0, BLP_IMAGE_FORMAT.IMAGE_ABGR8888);
+  const canvas = document.createElement("canvas");
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext("2d");
+  const imageData = new ImageData(
+    new Uint8ClampedArray(img.data.buffer),
+    img.width,
+    img.height
+  );
+  ctx.putImageData(imageData, 0, 0);
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      const newFile = new File([blob], file.name.replace(/\.blp$/i, ".png"), {
+        type: "image/png",
+      });
+      resolve(newFile);
+    }, "image/png");
+  });
+}
+
 async function uploadFiles(files) {
   if (!files || files.length === 0) return;
+
   const fd = new FormData();
-  for (const f of files) fd.append("files", f, f.name);
+  for (const f of files) {
+    if (f.name.toLowerCase().endsWith(".blp")) {
+      const pngFile = await decodeBLPtoPNG(f);
+      fd.append("files", pngFile, pngFile.name);
+    } else {
+      fd.append("files", f, f.name);
+    }
+  }
+
   const res = await fetch(API("/api/upload"), { method: "POST", body: fd });
   if (!res.ok) {
     alert("Upload failed.");
@@ -97,11 +132,9 @@ function attachEvents() {
   refreshBtn.addEventListener("click", refreshList);
 
   searchInput.addEventListener("input", async () => {
-    // Ask server to filter to keep client light for large sets
     await refreshList();
   });
 
-  // Drag-n-drop
   ["dragenter", "dragover"].forEach((ev) =>
     dropzone.addEventListener(ev, (e) => {
       e.preventDefault(); dropzone.classList.add("drag");
@@ -117,7 +150,6 @@ function attachEvents() {
     if (files.length) uploadFiles(files);
   });
 
-  // Modal open/close
   gallery.addEventListener("click", (e) => {
     const thumb = e.target.closest(".thumb");
     if (!thumb) return;
