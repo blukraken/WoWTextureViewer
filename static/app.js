@@ -16,7 +16,6 @@ const modalSize = $("#modalSize");
 const modalClose = $("#modalClose");
 const modalDownload = $("#modalDownload");
 
-// API_BASE is defined in index.html; it's "" for same-origin.
 const API = (path) => `${window.API_BASE || ""}${path}`;
 
 let allItems = [];
@@ -28,7 +27,7 @@ function safeName(name) {
 
 async function fetchImages(q = "") {
   const url = new URL(API("/api/images"), window.location.origin);
-  if ((window.API_BASE || "") === "") url.pathname = "/api/images"; // same origin
+  if ((window.API_BASE || "") === "") url.pathname = "/api/images";
   if (q) url.searchParams.set("search", q);
   const res = await fetch(url.toString(), { credentials: "omit" });
   if (!res.ok) throw new Error("Failed to load images");
@@ -64,7 +63,7 @@ function render(items) {
 async function refreshList() {
   const q = searchInput.value.trim();
   allItems = await fetchImages(q);
-  filtered = allItems; // server filtered by q
+  filtered = allItems;
   render(filtered);
 }
 
@@ -91,31 +90,6 @@ async function decodeBLPtoPNG(file) {
     }, "image/png");
   });
 }
-
-// static/app.js
-
-async function decodeTGAtoPNG(file) {
-  const ab = await file.arrayBuffer();
-  const tga = new TGA(new Uint8Array(ab));
-  const imageData = tga.getImageData();
-
-  const canvas = document.createElement("canvas");
-  canvas.width = imageData.width;
-  canvas.height = imageData.height;
-  const ctx = canvas.getContext("2d");
-  ctx.putImageData(imageData, 0, 0);
-
-  return new Promise((resolve) => {
-    canvas.toBlob((blob) => {
-      const newFile = new File([blob], file.name.replace(/\.tga$/i, ".png"), {
-        type: "image/png",
-      });
-      resolve(newFile);
-    }, "image/png");
-  });
-}
-
-// static/app.js
 
 async function uploadFiles(files) {
   if (!files || files.length === 0) return;
