@@ -81,7 +81,7 @@ class ImageItem(BaseModel):
 
 
 # ----------------- Utils -----------------
-SUPPORTED = {".blp", ".tga", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+SUPPORTED = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 
 def ext_of(filename: str) -> str:

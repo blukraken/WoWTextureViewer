@@ -92,13 +92,42 @@ async function decodeBLPtoPNG(file) {
   });
 }
 
+// static/app.js
+
+async function decodeTGAtoPNG(file) {
+  const ab = await file.arrayBuffer();
+  const tga = new TGA(new Uint8Array(ab));
+  const imageData = tga.getImageData();
+
+  const canvas = document.createElement("canvas");
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  const ctx = canvas.getContext("2d");
+  ctx.putImageData(imageData, 0, 0);
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      const newFile = new File([blob], file.name.replace(/\.tga$/i, ".png"), {
+        type: "image/png",
+      });
+      resolve(newFile);
+    }, "image/png");
+  });
+}
+
+// static/app.js
+
 async function uploadFiles(files) {
   if (!files || files.length === 0) return;
 
   const fd = new FormData();
   for (const f of files) {
-    if (f.name.toLowerCase().endsWith(".blp")) {
+    const lowerName = f.name.toLowerCase();
+    if (lowerName.endsWith(".blp")) {
       const pngFile = await decodeBLPtoPNG(f);
+      fd.append("files", pngFile, pngFile.name);
+    } else if (lowerName.endsWith(".tga")) { // 👈 ADD THIS ELSE IF BLOCK
+      const pngFile = await decodeTGAtoPNG(f);
       fd.append("files", pngFile, pngFile.name);
     } else {
       fd.append("files", f, f.name);
